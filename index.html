@@ -55,6 +55,19 @@
       padding: 10px;
       overflow-x: auto;
     }
+
+    mark {
+  background: yellow;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.key { color: #7c3aed; }
+.string { color: #16a34a; }
+.number { color: #f59e0b; }
+.boolean { color: #2563eb; }
+.null { color: #dc2626; }
+    
   </style>
 </head>
 
@@ -76,6 +89,9 @@
 
 <script>
 let logs = [];
+let collapsedGroups = new Set();
+
+/* ===================== EXTRACT JSON ===================== */
 
 function extractJSON(text) {
   const matches = [];
@@ -93,11 +109,20 @@ function extractJSON(text) {
       }
     }
   }
-
   return matches;
 }
 
-/* ===================== PARSE ===================== */
+/* ===================== SAFE JSON ===================== */
+
+function parseJSONSafe(str) {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return str;
+  }
+}
+
+/* ===================== PARSE LOGS ===================== */
 
 function parseLogs() {
   const input = document.getElementById("input").value;
@@ -108,6 +133,7 @@ function parseLogs() {
     const msg = (line.match(/msg="([^"]+)"/) || [])[1] || "";
     const status = (line.match(/status="([^"]+)"/) || [])[1] || "";
     const latency = parseFloat((line.match(/latency=([^ ]+)/) || [])[1] || "0");
+    const id = (line.match(/id=([^ ]+)/) || [])[1] || "";
 
     let type = "other";
     if (msg.toLowerCase().includes("request")) type = "request";
@@ -118,7 +144,7 @@ function parseLogs() {
     if (latency > 500) health = "slow";
 
     return {
-      id: i,
+      id: id || i,
       time,
       msg,
       status,
@@ -132,30 +158,37 @@ function parseLogs() {
   render();
 }
 
-function parseJSONSafe(str) {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return str;
-  }
+/* ===================== SEARCH HIGHLIGHT ===================== */
+
+function highlight(text, query) {
+  if (!query) return text;
+  const regex = new RegExp(`(${query})`, "gi");
+  return text.replace(regex, `<mark>$1</mark>`);
 }
 
 /* ===================== JSON TREE ===================== */
 
-function renderJSONTree(obj) {
+function renderJSONTree(obj, query = "") {
   if (obj === null) return `<span class="null">null</span>`;
-  if (typeof obj !== "object") return formatValue(obj);
+  if (typeof obj !== "object") {
+    return highlight(formatValue(obj), query);
+  }
 
   const id = Math.random().toString(36).slice(2);
 
-  let html = `<div>`;
-  html += `<span style="cursor:pointer;color:#6366f1" onclick="toggle('${id}')">▶ Object</span>`;
-  html += `<div id="${id}" style="display:none;margin-left:15px;">`;
+  let html = `
+    <div>
+      <span style="cursor:pointer;color:#6366f1" onclick="toggle('${id}')">
+        ▶ Object
+      </span>
+      <div id="${id}" style="display:none;margin-left:15px;">
+  `;
 
   for (const k in obj) {
     html += `
       <div>
-        <span class="key">"${k}"</span>: ${renderJSONTree(obj[k])}
+        <span class="key">${highlight('"' + k + '"', query)}</span>:
+        ${renderJSONTree(obj[k], query)}
       </div>
     `;
   }
@@ -169,7 +202,7 @@ function toggle(id) {
   el.style.display = el.style.display === "none" ? "block" : "none";
 }
 
-/* ===================== SYNTAX HIGHLIGHT ===================== */
+/* ===================== FORMAT VALUE ===================== */
 
 function formatValue(v) {
   if (typeof v === "string") return `<span class="string">"${v}"</span>`;
@@ -178,27 +211,21 @@ function formatValue(v) {
   return v;
 }
 
-/* ===================== COPY ===================== */
+/* ===================== COPY JSON ===================== */
 
 function copyJSON(obj) {
   navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
 }
 
-/* ===================== DIFF VIEW ===================== */
+/* ===================== GROUP TOGGLE ===================== */
 
-function renderDiff(a, b) {
-  return `
-    <div style="display:flex;gap:10px;">
-      <div style="flex:1;background:#0f172a;color:white;padding:10px;">
-        <b>REQUEST</b>
-        <pre>${JSON.stringify(a, null, 2)}</pre>
-      </div>
-      <div style="flex:1;background:#111827;color:white;padding:10px;">
-        <b>RESPONSE</b>
-        <pre>${JSON.stringify(b, null, 2)}</pre>
-      </div>
-    </div>
-  `;
+function toggleGroup(id) {
+  if (collapsedGroups.has(id)) {
+    collapsedGroups.delete(id);
+  } else {
+    collapsedGroups.add(id);
+  }
+  render();
 }
 
 /* ===================== RENDER ===================== */
@@ -211,6 +238,13 @@ function render() {
     JSON.stringify(l).toLowerCase().includes(q)
   );
 
+  const grouped = {};
+  filtered.forEach(l => {
+    const key = l.id || "ungrouped";
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(l);
+  });
+
   const requests = filtered.filter(l => l.type === "request");
   const responses = filtered.filter(l => l.type === "response");
 
@@ -222,49 +256,60 @@ function render() {
     </div>
   `;
 
-  output.innerHTML = filtered.map(l => `
-    <div class="card">
+  output.innerHTML = Object.entries(grouped).map(([groupId, items]) => {
 
-      <div>
-        <b>${l.time}</b> - ${l.msg}
-      </div>
+    const isCollapsed = collapsedGroups.has(groupId);
 
-      <div>
-        Type: <b>${l.type}</b> |
-        Status: ${l.status} |
-        Latency: ${l.latency}ms
-      </div>
-
-      <div class="${l.health}">
-        <b>${l.health.toUpperCase()}</b>
-      </div>
-
-      ${l.json.map(j => `
-        <div style="margin-top:10px">
-
-          <button onclick='copyJSON(${JSON.stringify(j)})'>
-            Copy JSON
-          </button>
-
-          <div style="margin-top:10px;padding:10px;background:#f5f5f5;border-radius:6px">
-            ${renderJSONTree(j)}
-          </div>
-
-        </div>
-      `).join("")}
-
-    </div>
-  `).join("");
-
-  /* OPTIONAL: auto diff view if request/response pairs exist */
-  if (requests.length && responses.length) {
-    output.innerHTML += `
+    return `
       <div class="card">
-        <h3>Request vs Response Diff</h3>
-        ${renderDiff(requests[0], responses[0])}
+
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <b>Group: ${groupId}</b>
+
+          <button onclick="toggleGroup('${groupId}')">
+            ${isCollapsed ? "Expand" : "Collapse"}
+          </button>
+        </div>
+
+        ${isCollapsed ? "" : `
+          ${items.map(l => `
+            <div style="margin-top:10px;padding:10px;border-left:3px solid #ddd">
+
+              <div>
+                <b>${highlight(l.time, q)}</b> - ${highlight(l.msg, q)}
+              </div>
+
+              <div>
+                Type: <b>${l.type}</b> |
+                Status: ${l.status} |
+                Latency: ${l.latency}ms
+              </div>
+
+              <div class="${l.health}">
+                <b>${l.health.toUpperCase()}</b>
+              </div>
+
+              ${l.json.map(j => `
+                <div style="margin-top:10px">
+
+                  <button onclick='copyJSON(${JSON.stringify(j)})'>
+                    Copy JSON
+                  </button>
+
+                  <div style="margin-top:10px;padding:10px;background:#f5f5f5;border-radius:6px">
+                    ${renderJSONTree(j, q)}
+                  </div>
+
+                </div>
+              `).join("")}
+
+            </div>
+          `).join("")}
+        `}
+
       </div>
     `;
-  }
+  }).join("");
 }
 </script>
 
