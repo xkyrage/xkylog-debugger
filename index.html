@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mini Kibana Log Debugger</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f5f5f5;
+    }
+
+    header {
+      padding: 16px;
+      background: #111;
+      color: white;
+      font-size: 20px;
+    }
+
+    .container {
+      padding: 16px;
+      max-width: 1200px;
+      margin: auto;
+    }
+
+    textarea, input {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      font-family: monospace;
+    }
+
+    button {
+      padding: 10px 14px;
+      background: black;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+
+    .card {
+      background: white;
+      padding: 12px;
+      margin-top: 10px;
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+
+    .error { color: red; }
+    .slow { color: orange; }
+    .ok { color: green; }
+
+    pre {
+      background: #eee;
+      padding: 10px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>Mini Kibana Log Debugger</header>
+
+<div class="container">
+
+  <textarea id="input" rows="10" placeholder="Paste logs here..."></textarea>
+  <button onclick="parseLogs()">Parse Logs</button>
+
+  <input id="search" placeholder="Search logs..." oninput="render()" />
+
+  <div id="stats"></div>
+  <div id="output"></div>
+
+</div>
+
+<script>
+let logs = [];
+
+function extractJSON(text) {
+  const matches = [];
+  let stack = 0, start = -1;
+
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') {
+      if (stack === 0) start = i;
+      stack++;
+    } else if (text[i] === '}') {
+      stack--;
+      if (stack === 0 && start !== -1) {
+        matches.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return matches;
+}
+
+function parseLogs() {
+  const input = document.getElementById("input").value;
+  const lines = input.split("\n").filter(Boolean);
+
+  logs = lines.map((line, i) => {
+    const time = (line.match(/time="([^"]+)"/) || [])[1] || "";
+    const level = (line.match(/level=([^ ]+)/) || [])[1] || "";
+    const msg = (line.match(/msg="([^"]+)"/) || [])[1] || "";
+    const id = (line.match(/id=([^ ]+)/) || [])[1] || "";
+    const status = (line.match(/status="([^"]+)"/) || [])[1] || "";
+    const latency = parseFloat((line.match(/latency=([^ ]+)/) || [])[1] || "0");
+
+    let health = "ok";
+    if (status && !status.startsWith("200")) health = "error";
+    if (latency > 500) health = "slow";
+
+    return {
+      id: i,
+      time,
+      level,
+      msg,
+      status,
+      latency,
+      health,
+      json: extractJSON(line)
+    };
+  });
+
+  render();
+}
+
+function render() {
+  const q = document.getElementById("search").value.toLowerCase();
+  const output = document.getElementById("output");
+
+  const filtered = logs.filter(l =>
+    JSON.stringify(l).toLowerCase().includes(q)
+  );
+
+  const stats = {
+    total: logs.length,
+    error: logs.filter(l => l.health === "error").length,
+    slow: logs.filter(l => l.health === "slow").length,
+    ok: logs.filter(l => l.health === "ok").length
+  };
+
+  document.getElementById("stats").innerHTML = `
+    <div class="card">
+      Total: ${stats.total} |
+      <span class="error">Errors: ${stats.error}</span> |
+      <span class="slow">Slow: ${stats.slow}</span> |
+      <span class="ok">OK: ${stats.ok}</span>
+    </div>
+  `;
+
+  output.innerHTML = filtered.map(l => `
+    <div class="card">
+      <div><b>${l.time}</b> - ${l.msg}</div>
+      <div>Status: ${l.status} | Latency: ${l.latency}ms</div>
+      <div class="${l.health}"><b>${l.health.toUpperCase()}</b></div>
+
+      ${l.json.map(j => `<pre>${j}</pre>`).join("")}
+    </div>
+  `).join("");
+}
+</script>
+
+</body>
+</html>
