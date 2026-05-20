@@ -1,74 +1,79 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>XkyLog Debugger</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 0;
-      background: #f5f5f5;
-    }
+<meta charset="UTF-8" />
+<title>XkyLog Debugger</title>
 
-    header {
-      padding: 16px;
-      background: #111;
-      color: white;
-      font-size: 20px;
-    }
+<style>
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  background: #f5f5f5;
+}
 
-    .container {
-      padding: 16px;
-      max-width: 1200px;
-      margin: auto;
-    }
+header {
+  padding: 16px;
+  background: #111;
+  color: white;
+  font-size: 20px;
+}
 
-    textarea, input {
-      width: 100%;
-      padding: 10px;
-      margin: 8px 0;
-      font-family: monospace;
-    }
+.container {
+  padding: 16px;
+  max-width: 1200px;
+  margin: auto;
+}
 
-    button {
-      padding: 10px 14px;
-      background: black;
-      color: white;
-      border: none;
-      cursor: pointer;
-    }
+textarea, input {
+  width: 100%;
+  padding: 10px;
+  margin: 8px 0;
+  font-family: monospace;
+}
 
-    .card {
-      background: white;
-      padding: 12px;
-      margin-top: 10px;
-      border-radius: 6px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-    }
+button {
+  padding: 6px 10px;
+  background: black;
+  color: white;
+  border: none;
+  cursor: pointer;
+  margin-top: 5px;
+}
 
-    .error { color: red; }
-    .slow { color: orange; }
-    .ok { color: green; }
+.card {
+  background: white;
+  padding: 12px;
+  margin-top: 10px;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
 
-    pre {
-      background: #eee;
-      padding: 10px;
-      overflow-x: auto;
-    }
+.error { color: red; }
+.slow { color: orange; }
+.ok { color: green; }
 
-    mark {
+mark {
   background: yellow;
   padding: 2px;
   border-radius: 3px;
 }
 
+/* JSON styling */
 .key { color: #7c3aed; }
 .string { color: #16a34a; }
 .number { color: #f59e0b; }
 .boolean { color: #2563eb; }
 .null { color: #dc2626; }
-    
-  </style>
+
+pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+</style>
+
 </head>
 
 <body>
@@ -77,17 +82,18 @@
 
 <div class="container">
 
-  <textarea id="input" rows="10" placeholder="Paste logs here..."></textarea>
-  <button onclick="parseLogs()">Parse Logs</button>
+<textarea id="input" rows="10" placeholder="Paste logs here..."></textarea>
+<button onclick="parseLogs()">Parse Logs</button>
 
-  <input id="search" placeholder="Search logs..." oninput="render()" />
+<input id="search" placeholder="Search logs..." oninput="render()" />
 
-  <div id="stats"></div>
-  <div id="output"></div>
+<div id="stats"></div>
+<div id="output"></div>
 
 </div>
 
 <script>
+
 let logs = [];
 let collapsedGroups = new Set();
 
@@ -114,7 +120,7 @@ function extractJSON(text) {
 
 /* ===================== SAFE JSON ===================== */
 
-function parseJSONSafe(str) {
+function parseSafeJSON(str) {
   try {
     return JSON.parse(str);
   } catch {
@@ -122,73 +128,46 @@ function parseJSONSafe(str) {
   }
 }
 
-/* ===================== PARSE LOGS ===================== */
+/* ===================== COPY FIXED ===================== */
 
-function parseLogs() {
-  const input = document.getElementById("input").value;
-  const lines = input.split("\n").filter(Boolean);
+function copyJSONFromLog(logId, jsonIndex) {
+  const log = logs.find(l => l.id === logId);
+  if (!log) return;
 
-  logs = lines.map((line, i) => {
-    const time = (line.match(/time="([^"]+)"/) || [])[1] || "";
-    const msg = (line.match(/msg="([^"]+)"/) || [])[1] || "";
-    const status = (line.match(/status="([^"]+)"/) || [])[1] || "";
-    const latency = parseFloat((line.match(/latency=([^ ]+)/) || [])[1] || "0");
-    const id = (line.match(/id=([^ ]+)/) || [])[1] || "";
+  const obj = log.json[jsonIndex];
+  const clean = typeof obj === "string" ? JSON.parse(obj) : obj;
 
-    let type = "other";
-    if (msg.toLowerCase().includes("request")) type = "request";
-    if (msg.toLowerCase().includes("response")) type = "response";
+  navigator.clipboard.writeText(JSON.stringify(clean, null, 2));
+}
 
-    let health = "ok";
-    if (status && !status.startsWith("200")) health = "error";
-    if (latency > 500) health = "slow";
+/* ===================== TOGGLE GROUP ===================== */
 
-    return {
-      id: id || i,
-      time,
-      msg,
-      status,
-      latency,
-      type,
-      health,
-      json: extractJSON(line).map(parseJSONSafe)
-    };
-  });
+function toggleGroup(id) {
+  if (collapsedGroups.has(id)) collapsedGroups.delete(id);
+  else collapsedGroups.add(id);
 
   render();
 }
 
-/* ===================== SEARCH HIGHLIGHT ===================== */
-
-function highlight(text, query) {
-  if (!query) return text;
-  const regex = new RegExp(`(${query})`, "gi");
-  return text.replace(regex, `<mark>$1</mark>`);
-}
-
 /* ===================== JSON TREE ===================== */
 
-function renderJSONTree(obj, query = "") {
+function renderJSONTree(obj, q = "") {
   if (obj === null) return `<span class="null">null</span>`;
-  if (typeof obj !== "object") {
-    return highlight(formatValue(obj), query);
-  }
+  if (typeof obj !== "object") return formatValue(obj, q);
 
   const id = Math.random().toString(36).slice(2);
 
   let html = `
     <div>
-      <span style="cursor:pointer;color:#6366f1" onclick="toggle('${id}')">
-        ▶ Object
-      </span>
+      <span style="cursor:pointer;color:#6366f1" onclick="toggle('${id}')">▶ Object</span>
       <div id="${id}" style="display:none;margin-left:15px;">
   `;
 
   for (const k in obj) {
     html += `
       <div>
-        <span class="key">${highlight('"' + k + '"', query)}</span>:
-        ${renderJSONTree(obj[k], query)}
+        <span class="key">${highlight(k, q)}</span>:
+        ${renderJSONTree(obj[k], q)}
       </div>
     `;
   }
@@ -202,29 +181,53 @@ function toggle(id) {
   el.style.display = el.style.display === "none" ? "block" : "none";
 }
 
-/* ===================== FORMAT VALUE ===================== */
+/* ===================== HIGHLIGHT ===================== */
 
-function formatValue(v) {
-  if (typeof v === "string") return `<span class="string">"${v}"</span>`;
+function highlight(text, q) {
+  if (!q) return text;
+  return text.replace(new RegExp(q, "gi"), m => `<mark>${m}</mark>`);
+}
+
+function formatValue(v, q) {
+  if (typeof v === "string") return `<span class="string">${highlight('"' + v + '"', q)}</span>`;
   if (typeof v === "number") return `<span class="number">${v}</span>`;
   if (typeof v === "boolean") return `<span class="boolean">${v}</span>`;
   return v;
 }
 
-/* ===================== COPY JSON ===================== */
+/* ===================== PARSE ===================== */
 
-function copyJSON(obj) {
-  navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
-}
+function parseLogs() {
+  const input = document.getElementById("input").value;
+  const lines = input.split("\n").filter(Boolean);
 
-/* ===================== GROUP TOGGLE ===================== */
+  logs = lines.map((line, i) => {
+    const time = (line.match(/time="([^"]+)"/) || [])[1] || "";
+    const msg = (line.match(/msg="([^"]+)"/) || [])[1] || "";
+    const status = (line.match(/status="([^"]+)"/) || [])[1] || "";
+    const latency = parseFloat((line.match(/latency=([^ ]+)/) || [])[1] || "0");
+    const id = (line.match(/id=([^ ]+)/) || [])[1] || i;
 
-function toggleGroup(id) {
-  if (collapsedGroups.has(id)) {
-    collapsedGroups.delete(id);
-  } else {
-    collapsedGroups.add(id);
-  }
+    let type = "other";
+    if (msg.toLowerCase().includes("request")) type = "request";
+    if (msg.toLowerCase().includes("response")) type = "response";
+
+    let health = "ok";
+    if (status && !status.startsWith("200")) health = "error";
+    if (latency > 500) health = "slow";
+
+    return {
+      id,
+      time,
+      msg,
+      status,
+      latency,
+      type,
+      health,
+      json: extractJSON(line).map(parseSafeJSON)
+    };
+  });
+
   render();
 }
 
@@ -245,72 +248,63 @@ function render() {
     grouped[key].push(l);
   });
 
-  const requests = filtered.filter(l => l.type === "request");
-  const responses = filtered.filter(l => l.type === "response");
-
   document.getElementById("stats").innerHTML = `
     <div class="card">
       Total: ${logs.length} |
-      Requests: ${requests.length} |
-      Responses: ${responses.length}
+      Requests: ${logs.filter(l => l.type === "request").length} |
+      Responses: ${logs.filter(l => l.type === "response").length}
     </div>
   `;
 
-  output.innerHTML = Object.entries(grouped).map(([groupId, items]) => {
+  output.innerHTML = Object.entries(grouped).map(([gid, items]) => {
 
-    const isCollapsed = collapsedGroups.has(groupId);
+    const collapsed = collapsedGroups.has(gid);
 
     return `
       <div class="card">
 
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <b>Group: ${groupId}</b>
-
-          <button onclick="toggleGroup('${groupId}')">
-            ${isCollapsed ? "Expand" : "Collapse"}
+        <div style="display:flex;justify-content:space-between;">
+          <b>Group: ${gid}</b>
+          <button onclick="toggleGroup('${gid}')">
+            ${collapsed ? "Expand" : "Collapse"}
           </button>
         </div>
 
-        ${isCollapsed ? "" : `
-          ${items.map(l => `
-            <div style="margin-top:10px;padding:10px;border-left:3px solid #ddd">
+        ${collapsed ? "" : items.map(l => `
+          <div style="margin-top:10px;padding-left:10px;border-left:3px solid #ddd">
 
-              <div>
-                <b>${highlight(l.time, q)}</b> - ${highlight(l.msg, q)}
-              </div>
+            <div><b>${l.time}</b> - ${highlight(l.msg, q)}</div>
 
-              <div>
-                Type: <b>${l.type}</b> |
-                Status: ${l.status} |
-                Latency: ${l.latency}ms
-              </div>
-
-              <div class="${l.health}">
-                <b>${l.health.toUpperCase()}</b>
-              </div>
-
-              ${l.json.map(j => `
-                <div style="margin-top:10px">
-
-                  <button onclick='copyJSON(${JSON.stringify(j)})'>
-                    Copy JSON
-                  </button>
-
-                  <div style="margin-top:10px;padding:10px;background:#f5f5f5;border-radius:6px">
-                    ${renderJSONTree(j, q)}
-                  </div>
-
-                </div>
-              `).join("")}
-
+            <div>
+              Type: ${l.type} |
+              Status: ${l.status} |
+              Latency: ${l.latency}ms
             </div>
-          `).join("")}
-        `}
+
+            <div class="${l.health}"><b>${l.health.toUpperCase()}</b></div>
+
+            ${l.json.map((j, idx) => `
+              <div style="margin-top:10px">
+
+                <button onclick='copyJSONFromLog("${l.id}", ${idx})'>
+                  Copy JSON
+                </button>
+
+                <div style="margin-top:10px;padding:10px;background:#0f172a;border-radius:6px;color:white">
+                  ${renderJSONTree(j, q)}
+                </div>
+
+              </div>
+            `).join("")}
+
+          </div>
+        `).join("")}
 
       </div>
     `;
   }).join("");
 }
+
 </script>
 
 </body>
