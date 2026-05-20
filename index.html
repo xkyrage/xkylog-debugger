@@ -8,14 +8,15 @@
 body {
   font-family: Arial, sans-serif;
   margin: 0;
-  background: #f5f5f5;
+  background: #0b1220;
+  color: #e5e7eb;
 }
 
 header {
   padding: 16px;
-  background: #111;
-  color: white;
-  font-size: 20px;
+  background: #111827;
+  font-size: 18px;
+  font-weight: bold;
 }
 
 .container {
@@ -29,48 +30,43 @@ textarea, input {
   padding: 10px;
   margin: 8px 0;
   font-family: monospace;
+  background: #111827;
+  color: white;
+  border: 1px solid #374151;
 }
 
 button {
-  padding: 6px 10px;
-  background: black;
+  padding: 10px;
+  background: #2563eb;
   color: white;
   border: none;
   cursor: pointer;
-  margin-top: 5px;
+  border-radius: 6px;
 }
 
 .card {
-  background: white;
+  background: #111827;
   padding: 12px;
   margin-top: 10px;
-  border-radius: 6px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  border-radius: 8px;
+  border: 1px solid #1f2937;
 }
 
-.error { color: red; }
-.slow { color: orange; }
-.ok { color: green; }
-
-mark {
-  background: yellow;
-  padding: 2px;
-  border-radius: 3px;
+.meta {
+  font-size: 12px;
+  color: #9ca3af;
 }
 
-/* JSON styling */
-.key { color: #7c3aed; }
-.string { color: #16a34a; }
-.number { color: #f59e0b; }
-.boolean { color: #2563eb; }
-.null { color: #dc2626; }
+/* JSON styles */
+.key { color: #a78bfa; }
+.string { color: #34d399; }
+.number { color: #fbbf24; }
+.boolean { color: #60a5fa; }
+.null { color: #ef4444; }
 
 pre {
-  background: #0f172a;
-  color: #e2e8f0;
-  padding: 10px;
-  border-radius: 6px;
-  overflow-x: auto;
+  margin: 0;
+  white-space: pre-wrap;
 }
 </style>
 
@@ -85,7 +81,7 @@ pre {
 <textarea id="input" rows="10" placeholder="Paste logs here..."></textarea>
 <button onclick="parseLogs()">Parse Logs</button>
 
-<input id="search" placeholder="Search logs..." oninput="render()" />
+<input id="search" placeholder="Search..." oninput="render()" />
 
 <div id="stats"></div>
 <div id="output"></div>
@@ -95,144 +91,99 @@ pre {
 <script>
 
 let logs = [];
-let collapsedGroups = new Set();
 
-/* ===================== EXTRACT JSON ===================== */
-
-function extractJSON(text) {
-  const matches = [];
-  let stack = 0, start = -1;
-
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '{') {
-      if (stack === 0) start = i;
-      stack++;
-    } else if (text[i] === '}') {
-      stack--;
-      if (stack === 0 && start !== -1) {
-        matches.push(text.slice(start, i + 1));
-        start = -1;
-      }
-    }
-  }
-  return matches;
-}
-
-/* ===================== SAFE JSON ===================== */
-
-function parseSafeJSON(str) {
+/* ------------------ FIX ESCAPED JSON ------------------ */
+function safeParseJSON(str) {
   try {
     return JSON.parse(str);
   } catch {
-    return str;
+    try {
+      return JSON.parse(str.replace(/\\"/g, '"'));
+    } catch {
+      return null;
+    }
   }
 }
 
-/* ===================== COPY FIXED ===================== */
+/* ------------------ EXTRACT JSON ------------------ */
+function extractJSON(text) {
+  const results = [];
+  let depth = 0, start = -1;
 
-function copyJSONFromLog(logId, jsonIndex) {
-  const log = logs.find(l => l.id === logId);
-  if (!log) return;
-
-  const obj = log.json[jsonIndex];
-  const clean = typeof obj === "string" ? JSON.parse(obj) : obj;
-
-  navigator.clipboard.writeText(JSON.stringify(clean, null, 2));
-}
-
-/* ===================== TOGGLE GROUP ===================== */
-
-function toggleGroup(id) {
-  if (collapsedGroups.has(id)) collapsedGroups.delete(id);
-  else collapsedGroups.add(id);
-
-  render();
-}
-
-/* ===================== JSON TREE ===================== */
-
-function renderJSONTree(obj, q = "") {
-  if (obj === null) return `<span class="null">null</span>`;
-  if (typeof obj !== "object") return formatValue(obj, q);
-
-  const id = Math.random().toString(36).slice(2);
-
-  let html = `
-    <div>
-      <span style="cursor:pointer;color:#6366f1" onclick="toggle('${id}')">▶ Object</span>
-      <div id="${id}" style="display:none;margin-left:15px;">
-  `;
-
-  for (const k in obj) {
-    html += `
-      <div>
-        <span class="key">${highlight(k, q)}</span>:
-        ${renderJSONTree(obj[k], q)}
-      </div>
-    `;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (text[i] === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        results.push(text.slice(start, i + 1));
+      }
+    }
   }
 
-  html += `</div></div>`;
-  return html;
+  return results;
 }
 
-function toggle(id) {
-  const el = document.getElementById(id);
-  el.style.display = el.style.display === "none" ? "block" : "none";
-}
-
-/* ===================== HIGHLIGHT ===================== */
-
-function highlight(text, q) {
-  if (!q) return text;
-  return text.replace(new RegExp(q, "gi"), m => `<mark>${m}</mark>`);
-}
-
-function formatValue(v, q) {
-  if (typeof v === "string") return `<span class="string">${highlight('"' + v + '"', q)}</span>`;
-  if (typeof v === "number") return `<span class="number">${v}</span>`;
-  if (typeof v === "boolean") return `<span class="boolean">${v}</span>`;
-  return v;
-}
-
-/* ===================== PARSE ===================== */
-
+/* ------------------ PARSE LOGS ------------------ */
 function parseLogs() {
-  const input = document.getElementById("input").value;
-  const lines = input.split("\n").filter(Boolean);
+  const lines = document.getElementById("input").value.split("\n").filter(Boolean);
 
   logs = lines.map((line, i) => {
     const time = (line.match(/time="([^"]+)"/) || [])[1] || "";
     const msg = (line.match(/msg="([^"]+)"/) || [])[1] || "";
     const status = (line.match(/status="([^"]+)"/) || [])[1] || "";
     const latency = parseFloat((line.match(/latency=([^ ]+)/) || [])[1] || "0");
-    const id = (line.match(/id=([^ ]+)/) || [])[1] || i;
 
     let type = "other";
-    if (msg.toLowerCase().includes("request")) type = "request";
-    if (msg.toLowerCase().includes("response")) type = "response";
+    if (msg.includes("request")) type = "request";
+    if (msg.includes("response")) type = "response";
 
-    let health = "ok";
-    if (status && !status.startsWith("200")) health = "error";
-    if (latency > 500) health = "slow";
+    const jsonBlocks = extractJSON(line)
+      .map(safeParseJSON)
+      .filter(Boolean);
 
     return {
-      id,
+      id: i,
       time,
       msg,
       status,
       latency,
       type,
-      health,
-      json: extractJSON(line).map(parseSafeJSON)
+      json: jsonBlocks
     };
   });
 
   render();
 }
 
-/* ===================== RENDER ===================== */
+/* ------------------ JSON RENDERER (REAL VIEW) ------------------ */
+function renderJSON(obj) {
+  if (obj === null) return `<span class="null">null</span>`;
 
+  if (typeof obj !== "object") {
+    if (typeof obj === "string") return `<span class="string">"${obj}"</span>`;
+    if (typeof obj === "number") return `<span class="number">${obj}</span>`;
+    if (typeof obj === "boolean") return `<span class="boolean">${obj}</span>`;
+    return obj;
+  }
+
+  let html = `{<div style="padding-left:15px">`;
+
+  for (const k in obj) {
+    html += `
+      <div>
+        <span class="key">"${k}"</span>: ${renderJSON(obj[k])}
+      </div>
+    `;
+  }
+
+  html += `</div>}`;
+
+  return html;
+}
+
+/* ------------------ RENDER ------------------ */
 function render() {
   const q = document.getElementById("search").value.toLowerCase();
   const output = document.getElementById("output");
@@ -241,68 +192,34 @@ function render() {
     JSON.stringify(l).toLowerCase().includes(q)
   );
 
-  const grouped = {};
-  filtered.forEach(l => {
-    const key = l.id || "ungrouped";
-    if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(l);
-  });
-
   document.getElementById("stats").innerHTML = `
     <div class="card">
-      Total: ${logs.length} |
+      Total Logs: ${logs.length} |
       Requests: ${logs.filter(l => l.type === "request").length} |
       Responses: ${logs.filter(l => l.type === "response").length}
     </div>
   `;
 
-  output.innerHTML = Object.entries(grouped).map(([gid, items]) => {
+  output.innerHTML = filtered.map(l => `
+    <div class="card">
 
-    const collapsed = collapsedGroups.has(gid);
-
-    return `
-      <div class="card">
-
-        <div style="display:flex;justify-content:space-between;">
-          <b>Group: ${gid}</b>
-          <button onclick="toggleGroup('${gid}')">
-            ${collapsed ? "Expand" : "Collapse"}
-          </button>
-        </div>
-
-        ${collapsed ? "" : items.map(l => `
-          <div style="margin-top:10px;padding-left:10px;border-left:3px solid #ddd">
-
-            <div><b>${l.time}</b> - ${highlight(l.msg, q)}</div>
-
-            <div>
-              Type: ${l.type} |
-              Status: ${l.status} |
-              Latency: ${l.latency}ms
-            </div>
-
-            <div class="${l.health}"><b>${l.health.toUpperCase()}</b></div>
-
-            ${l.json.map((j, idx) => `
-              <div style="margin-top:10px">
-
-                <button onclick='copyJSONFromLog("${l.id}", ${idx})'>
-                  Copy JSON
-                </button>
-
-                <div style="margin-top:10px;padding:10px;background:#0f172a;border-radius:6px;color:white">
-                  ${renderJSONTree(j, q)}
-                </div>
-
-              </div>
-            `).join("")}
-
-          </div>
-        `).join("")}
-
+      <div class="meta">
+        ${l.time} | ${l.type} | ${l.status} | ${l.latency}ms
       </div>
-    `;
-  }).join("");
+
+      <div>${l.msg}</div>
+
+      ${l.json.length
+        ? l.json.map(j => `
+            <div style="margin-top:10px;padding:10px;background:#0f172a;border-radius:6px">
+              ${renderJSON(j)}
+            </div>
+          `).join("")
+        : ""
+      }
+
+    </div>
+  `).join("");
 }
 
 </script>
