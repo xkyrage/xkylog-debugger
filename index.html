@@ -185,11 +185,11 @@ function renderJSON(obj, q) {
 
   return `
     <div>
-      <span onclick="toggle('${id}')" style="cursor:pointer;color:#60a5fa">
-        ▶
-      </span>
-      <span>{...}</span>
-      <div id="${id}" style="display:none;padding-left:15px">
+  <span id="icon-${id}" onclick="toggle('${id}')" style="cursor:pointer;color:#60a5fa">
+  ▼
+</span>
+<span>{</span>
+<div id="${id}" style="display:block;padding-left:15px">
         ${inner}
       </div>
     </div>
@@ -198,7 +198,15 @@ function renderJSON(obj, q) {
 
 function toggle(id) {
   const el = document.getElementById(id);
-  el.style.display = el.style.display === "none" ? "block" : "none";
+  const icon = document.getElementById("icon-" + id);
+
+  if (el.style.display === "none") {
+    el.style.display = "block";
+    icon.innerHTML = "▼";
+  } else {
+    el.style.display = "none";
+    icon.innerHTML = "▶";
+  }
 }
 
 /* ------------------ GROUP REQUEST/RESPONSE ------------------ */
