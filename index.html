@@ -91,21 +91,50 @@ pre {
 <script>
 
 let logs = [];
+let groupedLogs = [];
 
-/* ------------------ FIX ESCAPED JSON ------------------ */
+/* ------------------ UTILS ------------------ */
+function escapeHTML(str) {
+  return str.replace(/[&<>"']/g, m => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+  }[m]));
+}
+
+function highlight(text, q) {
+  if (!q) return text;
+  const regex = new RegExp(`(${q})`, "gi");
+  return text.replace(regex, `<mark style="background:#facc15;color:black">$1</mark>`);
+}
+
+function copyJSON(data) {
+  navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+}
+
+/* ------------------ LATENCY COLOR ------------------ */
+function latencyColor(ms) {
+  if (ms < 200) return "#22c55e";   // fast
+  if (ms < 800) return "#eab308";   // medium
+  return "#ef4444";                 // slow
+}
+
+/* ------------------ METHOD ------------------ */
+function detectMethod(line) {
+  const methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+  for (let m of methods) {
+    if (line.toUpperCase().includes(m)) return m;
+  }
+  return "UNKNOWN";
+}
+
+/* ------------------ JSON PARSE ------------------ */
 function safeParseJSON(str) {
-  try {
-    return JSON.parse(str);
-  } catch {
-    try {
-      return JSON.parse(str.replace(/\\"/g, '"'));
-    } catch {
-      return null;
-    }
+  try { return JSON.parse(str); }
+  catch {
+    try { return JSON.parse(str.replace(/\\"/g, '"')); }
+    catch { return null; }
   }
 }
 
-/* ------------------ EXTRACT JSON ------------------ */
 function extractJSON(text) {
   const results = [];
   let depth = 0, start = -1;
@@ -121,23 +150,81 @@ function extractJSON(text) {
       }
     }
   }
-
   return results;
 }
 
-/* ------------------ PARSE LOGS ------------------ */
+/* ------------------ COLLAPSIBLE JSON ------------------ */
+function renderJSON(obj, q) {
+  if (obj === null) return `<span class="null">null</span>`;
+
+  if (typeof obj !== "object") {
+    let val = highlight(escapeHTML(String(obj)), q);
+    if (typeof obj === "string") return `<span class="string">"${val}"</span>`;
+    if (typeof obj === "number") return `<span class="number">${val}</span>`;
+    if (typeof obj === "boolean") return `<span class="boolean">${val}</span>`;
+    return val;
+  }
+
+  const id = Math.random().toString(36).slice(2);
+
+  let inner = Object.entries(obj).map(([k, v]) => `
+    <div>
+      <span class="key">"${highlight(escapeHTML(k), q)}"</span>: ${renderJSON(v, q)}
+    </div>
+  `).join("");
+
+  return `
+    <div>
+      <span onclick="toggle('${id}')" style="cursor:pointer;color:#60a5fa">
+        ▶
+      </span>
+      <span>{...}</span>
+      <div id="${id}" style="display:none;padding-left:15px">
+        ${inner}
+      </div>
+    </div>
+  `;
+}
+
+function toggle(id) {
+  const el = document.getElementById(id);
+  el.style.display = el.style.display === "none" ? "block" : "none";
+}
+
+/* ------------------ GROUP REQUEST/RESPONSE ------------------ */
+function groupLogs() {
+  groupedLogs = [];
+  let current = null;
+
+  for (let log of logs) {
+    if (log.type === "request") {
+      if (current) groupedLogs.push(current);
+      current = { request: log, response: null };
+    } else if (log.type === "response" && current) {
+      current.response = log;
+      groupedLogs.push(current);
+      current = null;
+    }
+  }
+
+  if (current) groupedLogs.push(current);
+}
+
+/* ------------------ PARSE ------------------ */
 function parseLogs() {
   const lines = document.getElementById("input").value.split("\n").filter(Boolean);
 
   logs = lines.map((line, i) => {
     const time = (line.match(/time="([^"]+)"/) || [])[1] || "";
     const msg = (line.match(/msg="([^"]+)"/) || [])[1] || "";
-    const status = (line.match(/status="([^"]+)"/) || [])[1] || "";
+    const status = (line.match(/status="?([^" ]+)"?/) || [])[1] || "";
     const latency = parseFloat((line.match(/latency=([^ ]+)/) || [])[1] || "0");
 
     let type = "other";
     if (msg.includes("request")) type = "request";
     if (msg.includes("response")) type = "response";
+
+    const method = detectMethod(line);
 
     const jsonBlocks = extractJSON(line)
       .map(safeParseJSON)
@@ -145,42 +232,19 @@ function parseLogs() {
 
     return {
       id: i,
+      raw: line,
       time,
       msg,
       status,
       latency,
       type,
+      method,
       json: jsonBlocks
     };
   });
 
+  groupLogs();
   render();
-}
-
-/* ------------------ JSON RENDERER (REAL VIEW) ------------------ */
-function renderJSON(obj) {
-  if (obj === null) return `<span class="null">null</span>`;
-
-  if (typeof obj !== "object") {
-    if (typeof obj === "string") return `<span class="string">"${obj}"</span>`;
-    if (typeof obj === "number") return `<span class="number">${obj}</span>`;
-    if (typeof obj === "boolean") return `<span class="boolean">${obj}</span>`;
-    return obj;
-  }
-
-  let html = `{<div style="padding-left:15px">`;
-
-  for (const k in obj) {
-    html += `
-      <div>
-        <span class="key">"${k}"</span>: ${renderJSON(obj[k])}
-      </div>
-    `;
-  }
-
-  html += `</div>}`;
-
-  return html;
 }
 
 /* ------------------ RENDER ------------------ */
@@ -188,41 +252,62 @@ function render() {
   const q = document.getElementById("search").value.toLowerCase();
   const output = document.getElementById("output");
 
-  const filtered = logs.filter(l =>
-    JSON.stringify(l).toLowerCase().includes(q)
-  );
-
   document.getElementById("stats").innerHTML = `
     <div class="card">
       Total Logs: ${logs.length} |
-      Requests: ${logs.filter(l => l.type === "request").length} |
-      Responses: ${logs.filter(l => l.type === "response").length}
+      Transactions: ${groupedLogs.length}
     </div>
   `;
 
-  output.innerHTML = filtered.map(l => `
+  output.innerHTML = groupedLogs.map(pair => `
     <div class="card">
 
-      <div class="meta">
-        ${l.time} | ${l.type} | ${l.status} | ${l.latency}ms
+      <!-- REQUEST -->
+      <div>
+        <strong style="color:#3b82f6">REQUEST</strong>
+        <div class="meta">
+          ${pair.request.time} |
+          ${pair.request.method}
+        </div>
+        <div>${highlight(escapeHTML(pair.request.msg), q)}</div>
+
+        ${pair.request.json.map(j => `
+          <div style="margin-top:8px;background:#0f172a;padding:10px;border-radius:6px;position:relative">
+            <button onclick='copyJSON(${JSON.stringify(j)})'
+              style="position:absolute;top:5px;right:5px;font-size:11px">Copy</button>
+            ${renderJSON(j, q)}
+          </div>
+        `).join("")}
       </div>
 
-      <div>${l.msg}</div>
+      <!-- RESPONSE -->
+      ${pair.response ? `
+      <div style="margin-top:10px">
+        <strong style="color:#22c55e">RESPONSE</strong>
+        <div class="meta">
+          ${pair.response.time} |
+          <span style="color:${latencyColor(pair.response.latency)}">
+            ${pair.response.latency}ms
+          </span> |
+          ${pair.response.status}
+        </div>
 
-      ${l.json.length
-        ? l.json.map(j => `
-            <div style="margin-top:10px;padding:10px;background:#0f172a;border-radius:6px">
-              ${renderJSON(j)}
-            </div>
-          `).join("")
-        : ""
-      }
+        <div>${highlight(escapeHTML(pair.response.msg), q)}</div>
+
+        ${pair.response.json.map(j => `
+          <div style="margin-top:8px;background:#0f172a;padding:10px;border-radius:6px;position:relative">
+            <button onclick='copyJSON(${JSON.stringify(j)})'
+              style="position:absolute;top:5px;right:5px;font-size:11px">Copy</button>
+            ${renderJSON(j, q)}
+          </div>
+        `).join("")}
+      </div>
+      ` : ""}
 
     </div>
   `).join("");
 }
 
 </script>
-
 </body>
 </html>
